@@ -1,0 +1,4 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<AddIns>
+	<AddIn name="ThreeJsExport" description="Miscellaneous  ThreeJsExport." assembly="ThreeJsExport.dll" typename="SpaceClaim.AddIn.ThreeJsExport.AddIn" host="SameAppDomain"/>
+</AddIns>

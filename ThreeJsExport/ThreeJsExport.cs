@@ -1,0 +1,238 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Drawing;
+using System.Linq;
+using System.Windows.Forms;
+using SpaceClaim.Api.V11;
+using SpaceClaim.Api.V11.Display;
+using ThreeJsExport.Properties;
+using SpaceClaim.Api.V11.Extensibility;
+using SpaceClaim.Api.V11.Geometry;
+using SpaceClaim.Api.V11.Modeler;
+using Point = SpaceClaim.Api.V11.Geometry.Point;
+using ScreenPoint = System.Drawing.Point;
+using System.Text;
+using System.IO;
+using Newtonsoft.Json;
+
+namespace SpaceClaim.AddIn.ThreeJsExport {
+    class ExportThreeJsToolCapsule : CommandCapsule {
+        public ExportThreeJsToolCapsule(string commandName)
+            : base(commandName, "Export") {
+        }
+
+        protected override void OnInitialize(Command command) {
+        }
+
+        protected override void OnUpdate(Command command) {
+            Window window = Window.ActiveWindow;
+            command.IsEnabled = window != null &&
+                                Window.ActiveWindow.Scene is Part;
+            command.IsChecked = false;
+        }
+
+        public static IEnumerable<IPart> WalkParts(Part part) { // Copied from SpaceClaim.Api.V10.Examples class ShowBomCapsule
+            Debug.Assert(part != null);
+
+            // GetDescendants goes not include the object itself
+            yield return part;
+
+            foreach (IPart descendant in part.GetDescendants<IPart>())
+                yield return descendant;
+        }
+
+        protected override void OnExecute(Command command, ExecutionContext context, Rectangle buttonRect) {
+            var window = Window.ActiveWindow;
+            var document = window.Document;
+
+            var surfaceDeviationCommand = Command.GetCommand("SurfaceDeviation");            
+            double surfaceDeviation;
+            if (!double.TryParse(surfaceDeviationCommand.Text, out surfaceDeviation))
+                surfaceDeviation = (new TessellationOptions()).SurfaceDeviation;
+
+            var angleDeviationCommand = Command.GetCommand("AngleDeviation");
+            double angleDeviation;
+            if (!double.TryParse(angleDeviationCommand.Text, out angleDeviation))
+                angleDeviation = (new TessellationOptions()).AngleDeviation;
+
+            Part mainPart = (Part) Window.ActiveWindow.Scene;
+
+            var tessellations = new Dictionary<Body, BodyTessellation>();
+
+            var totalTessellation = new BodyTessellation();
+            foreach (var iPart in WalkParts(mainPart)) {
+                var transform = iPart.TransformToMaster.Inverse;
+
+                foreach (var body in iPart.Bodies) {
+                    var masterBody = body.Master.Shape;
+
+                    BodyTessellation tessellation;
+                    if (!tessellations.TryGetValue(masterBody, out tessellation)) {
+                        tessellation = GetBodyTessellation(masterBody, f => body.Master.GetDesignFace(f).GetColor(null) ?? body.Master.GetColor(null) ?? Color.Gray
+                                        , surfaceDeviation, angleDeviation);
+                        tessellations[masterBody] = tessellation;
+                    }
+
+                    totalTessellation.Add(tessellation.GetTransformed(transform));
+                }
+            }
+
+            var result = totalTessellation.ToJson();
+
+            var d = new SaveFileDialog();
+            d.FileName = document.Path;
+            d.ShowDialog();
+
+            File.WriteAllText(d.FileName, result);
+        }
+
+        class BodyTessellation {
+            public List<Point> VertexPositions = new List<Point>();
+            public List<Color> FaceColors = new List<Color>();
+            public List<FaceStruct> Faces = new List<FaceStruct>();
+
+            public BodyTessellation GetTransformed(Matrix transform) {
+                return new BodyTessellation {
+                    VertexPositions = new List<Point>(this.VertexPositions.Select(p => transform * p)),
+                    FaceColors = this.FaceColors,
+                    Faces = this.Faces
+                };
+            }
+
+            public void Add(BodyTessellation other) {
+                int vertexOffset = VertexPositions.Count;
+                int faceColorOffset = FaceColors.Count;
+
+                VertexPositions.AddRange(other.VertexPositions);
+                FaceColors.AddRange(other.FaceColors);
+                Faces.AddRange(other.Faces.Select(f => new FaceStruct {
+                    Vertex1 = f.Vertex1 + vertexOffset,
+                    Vertex2 = f.Vertex2 + vertexOffset,
+                    Vertex3 = f.Vertex3 + vertexOffset,
+                    Color = f.Color + faceColorOffset
+                }));
+            }
+
+            public string ToJson() {
+                StringBuilder sb = new StringBuilder();
+                StringWriter sw = new StringWriter(sb);
+
+                using (JsonWriter writer = new JsonTextWriter(sw)) {
+                    writer.Formatting = Formatting.Indented;
+
+                    writer.WriteStartObject();
+
+                    writer.WritePropertyName("metadata");
+                    writer.WriteStartObject();
+                    writer.WritePropertyName("formatVersion");
+                    writer.WriteValue(3);
+                    writer.WriteEndObject();
+
+                    writer.WritePropertyName("vertices");
+                    writer.WriteStartArray();
+                    foreach (var vertex in VertexPositions)
+                        writer.WriteRawValue(string.Format("{0},{1},{2}", vertex.X, vertex.Y, vertex.Z));
+                    writer.WriteEndArray();
+
+                    writer.WritePropertyName("colors");
+                    writer.WriteStartArray();
+                    foreach (var color in FaceColors)
+                        writer.WriteRawValue(string.Format("{0},{1},{2}", color.R, color.G, color.B));
+                    writer.WriteEndArray();
+
+                    writer.WritePropertyName("faces");
+                    writer.WriteStartArray();
+                    foreach (var face in Faces)
+                        writer.WriteRawValue(face.ToString());
+                    writer.WriteEndArray();
+
+                    writer.WriteEndObject();
+                }
+
+                return sb.ToString();
+            }
+        }
+
+        class FaceStruct {
+            public int Vertex1;
+            public int Vertex2;
+            public int Vertex3;
+            public int Color;
+
+            [Flags]
+            enum FaceType {
+                Triangle = 0,
+                Quad = 1,
+                Material = 2,
+                UV = 4,
+                VertexUV = 8,
+                Normal = 16,
+                VertexNormal = 32,
+                Color = 64,
+                VertexColor = 128
+            };
+
+            public override string ToString() {
+                var faceType = FaceType.Triangle & FaceType.Color;
+
+                return string.Format("{0}, {1},{2},{3}, {4}", (int)faceType, Vertex1, Vertex2, Vertex3, Color);
+            }
+        }
+
+        static BodyTessellation GetBodyTessellation(Body body, Func<Face, Color> faceColor, double surfaceDeviation, double angleDeviation) {
+            var tessellationOptions = new TessellationOptions(surfaceDeviation, angleDeviation);
+            var tessellation = body.GetTessellation(null, FacetSense.LeftHanded, tessellationOptions);
+
+            var vertices = new Dictionary<FacetVertex, int>();
+            var vertexList = new List<Point>();
+
+            var colors = new Dictionary<Color, int>();
+            var colorList = new List<Color>();
+
+            var faces = new List<FaceStruct>();
+            foreach (var pair in tessellation) {
+                var color = faceColor(pair.Key);
+
+                int colorIndex;
+                if (!colors.TryGetValue(color, out colorIndex)) {
+                    colorList.Add(color);
+                    colorIndex = colorList.Count - 1;
+                    colors[color] = colorIndex;
+                }
+
+                var vertexIndices = new Dictionary<int, int>();
+
+                var i = 0;
+                foreach (var vertex in pair.Value.Vertices) {
+                    int index;
+                    if (!vertices.TryGetValue(vertex, out index)) {
+                        vertexList.Add(vertex.Position);
+                        index = vertexList.Count - 1;
+                        vertices[vertex] = index;
+                    }
+
+                    vertexIndices[i] = index;
+                    i++;
+                }
+
+                foreach (var strip in pair.Value.FacetStrips) {
+                    foreach (var facet in strip.Facets) {
+                        faces.Add(new FaceStruct {
+                            Vertex1 = vertexIndices[facet.Vertex0],
+                            Vertex2 = vertexIndices[facet.Vertex1],
+                            Vertex3 = vertexIndices[facet.Vertex2],
+                            Color = colorIndex
+                        });
+                    }
+                }
+            }
+
+            return new BodyTessellation {
+                VertexPositions = vertexList,
+                FaceColors = colorList,
+                Faces = faces
+            };
+        }
+    }
+}
