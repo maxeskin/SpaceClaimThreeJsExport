@@ -28,7 +28,7 @@ namespace SpaceClaim.AddIn.ThreeJsExport {
         protected override void OnUpdate(Command command) {
             Window window = Window.ActiveWindow;
             command.IsEnabled = window != null &&
-                                Window.ActiveWindow.Scene is Part;
+                                window.Scene is Part;
             command.IsChecked = false;
         }
 
@@ -69,8 +69,10 @@ namespace SpaceClaim.AddIn.ThreeJsExport {
 
                     BodyTessellation tessellation;
                     if (!tessellations.TryGetValue(masterBody, out tessellation)) {
-                        tessellation = GetBodyTessellation(masterBody, f => body.Master.GetDesignFace(f).GetColor(null) ?? body.Master.GetColor(null) ?? Color.Gray
-                                        , surfaceDeviation, angleDeviation);
+                        Func<Face, Color> getColor = f => body.Master.GetDesignFace(f).GetColor(null) ?? 
+                                            body.Master.GetColor(null) ?? 
+                                            body.Master.Layer.GetColor(null);
+                        tessellation = GetBodyTessellation(masterBody, getColor, surfaceDeviation, angleDeviation);
                         tessellations[masterBody] = tessellation;
                     }
 
@@ -138,7 +140,7 @@ namespace SpaceClaim.AddIn.ThreeJsExport {
                     writer.WritePropertyName("colors");
                     writer.WriteStartArray();
                     foreach (var color in FaceColors)
-                        writer.WriteRawValue(string.Format("{0},{1},{2}", color.R, color.G, color.B));
+                        writer.WriteValue(((long)color.R << 16) | ((long)color.G << 8) | color.B);
                     writer.WriteEndArray();
 
                     writer.WritePropertyName("faces");
@@ -174,7 +176,7 @@ namespace SpaceClaim.AddIn.ThreeJsExport {
             };
 
             public override string ToString() {
-                var faceType = FaceType.Triangle & FaceType.Color;
+                var faceType = FaceType.Triangle | FaceType.Color;
 
                 return string.Format("{0}, {1},{2},{3}, {4}", (int)faceType, Vertex1, Vertex2, Vertex3, Color);
             }
@@ -182,7 +184,7 @@ namespace SpaceClaim.AddIn.ThreeJsExport {
 
         static BodyTessellation GetBodyTessellation(Body body, Func<Face, Color> faceColor, double surfaceDeviation, double angleDeviation) {
             var tessellationOptions = new TessellationOptions(surfaceDeviation, angleDeviation);
-            var tessellation = body.GetTessellation(null, FacetSense.LeftHanded, tessellationOptions);
+            var tessellation = body.GetTessellation(null, FacetSense.RightHanded, tessellationOptions);
 
             var vertices = new Dictionary<FacetVertex, int>();
             var vertexList = new List<Point>();
