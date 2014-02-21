@@ -184,9 +184,9 @@ namespace SpaceClaim.AddIn.ThreeJsExport {
 
         static BodyTessellation GetBodyTessellation(Body body, Func<Face, Color> faceColor, double surfaceDeviation, double angleDeviation) {
             var tessellationOptions = new TessellationOptions(surfaceDeviation, angleDeviation);
-            var tessellation = body.GetTessellation(null, FacetSense.RightHanded, tessellationOptions);
+            var tessellation = body.GetTessellation(null, tessellationOptions);
 
-            var vertices = new Dictionary<FacetVertex, int>();
+            var vertices = new Dictionary<PositionNormalTextured, int>();
             var vertexList = new List<Point>();
 
             var colors = new Dictionary<Color, int>();
@@ -218,15 +218,13 @@ namespace SpaceClaim.AddIn.ThreeJsExport {
                     i++;
                 }
 
-                foreach (var strip in pair.Value.FacetStrips) {
-                    foreach (var facet in strip.Facets) {
-                        faces.Add(new FaceStruct {
-                            Vertex1 = vertexIndices[facet.Vertex0],
-                            Vertex2 = vertexIndices[facet.Vertex1],
-                            Vertex3 = vertexIndices[facet.Vertex2],
-                            Color = colorIndex
-                        });
-                    }
+                foreach (var facet in pair.Value.Facets) {
+                    faces.Add(new FaceStruct {
+                        Vertex1 = vertexIndices[facet.Vertex0],
+                        Vertex2 = vertexIndices[facet.Vertex1],
+                        Vertex3 = vertexIndices[facet.Vertex2],
+                        Color = colorIndex
+                    });
                 }
             }
 
