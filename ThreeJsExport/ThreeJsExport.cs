@@ -65,6 +65,9 @@ namespace SpaceClaim.AddIn.ThreeJsExport {
                 var transform = iPart.TransformToMaster.Inverse;
 
                 foreach (var body in iPart.Bodies) {
+					if (!body.GetVisibility(null) ?? !body.Master.Layer.IsVisible(null))
+						continue;
+
                     var masterBody = body.Master.Shape;
 
                     BodyTessellation tessellation;
