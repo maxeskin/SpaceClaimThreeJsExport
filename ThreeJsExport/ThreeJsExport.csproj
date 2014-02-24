@@ -49,7 +49,7 @@
     <DebugSymbols>true</DebugSymbols>
     <DebugType>full</DebugType>
     <Optimize>false</Optimize>
-    <OutputPath>C:\SpaceClaim-debug\Addins\ThreeJsExport\</OutputPath>
+    <OutputPath>..\..\..\..\..\..\ProgramData\SpaceClaim\Addins\ThreeJSON\</OutputPath>
     <DefineConstants>DEBUG;TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
@@ -76,9 +76,7 @@
     <Reference Include="Newtonsoft.Json">
       <HintPath>..\packages\Newtonsoft.Json.5.0.8\lib\net40\Newtonsoft.Json.dll</HintPath>
     </Reference>
-    <Reference Include="SpaceClaim.Api.V11">
-      <HintPath>..\..\..\..\..\..\..\SpaceClaim-debug\SpaceClaim.Api.V11\SpaceClaim.Api.V11.dll</HintPath>
-    </Reference>
+    <Reference Include="SpaceClaim.Api.V11, Version=11.2.8262.0, Culture=neutral, PublicKeyToken=7210645d4d5e3a39, processorArchitecture=MSIL" />
     <Reference Include="System" />
     <Reference Include="System.Core">
       <RequiredTargetFramework>3.5</RequiredTargetFramework>
