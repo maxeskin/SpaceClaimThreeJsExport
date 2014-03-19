@@ -32,14 +32,14 @@ namespace SpaceClaim.AddIn.ThreeJsExport {
             command.IsChecked = false;
         }
 
-        public static IEnumerable<IPart> WalkParts(Part part) { // Copied from SpaceClaim.Api.V10.Examples class ShowBomCapsule
+        public static IEnumerable<Part> WalkParts(Part part) {
             Debug.Assert(part != null);
 
             // GetDescendants goes not include the object itself
             yield return part;
 
             foreach (IPart descendant in part.GetDescendants<IPart>())
-                yield return descendant;
+                yield return descendant.Master;
         }
 
         protected override void OnExecute(Command command, ExecutionContext context, Rectangle buttonRect) {
@@ -58,32 +58,72 @@ namespace SpaceClaim.AddIn.ThreeJsExport {
 
             Part mainPart = (Part)Window.ActiveWindow.Scene;
 
-            var tessellations = new Dictionary<Body, PartTessellation>();
+            int i = 0;
+            var partIDs = new Dictionary<Part, int>();
 
-            var totalTessellation = new PartTessellation();
-            foreach (var iPart in WalkParts(mainPart)) {
-                var transform = iPart.TransformToMaster.Inverse;
+            foreach (var part in WalkParts(mainPart)) {
+                if (partIDs.ContainsKey(part))
+                    continue;
 
-                foreach (var body in iPart.Bodies) {
-                    if (!body.GetVisibility(null) ?? !body.Master.Layer.IsVisible(null))
-                        continue;
-
-                    var masterBody = body.Master.Shape;
-
-                    PartTessellation tessellation;
-                    if (!tessellations.TryGetValue(masterBody, out tessellation)) {
-                        Func<Face, Color> getColor = f => body.Master.GetDesignFace(f).GetColor(null) ??
-                                            body.Master.GetColor(null) ??
-                                            body.Master.Layer.GetColor(null);
-                        tessellation = GetBodyTessellation(masterBody, getColor, surfaceDeviation, angleDeviation);
-                        tessellations[masterBody] = tessellation;
-                    }
-
-                    totalTessellation.Add(tessellation.GetTransformed(transform));
-                }
+                partIDs[part] = i++;
             }
 
-            var result = totalTessellation.ToJson();
+            var partList = new Part[partIDs.Count];
+
+            foreach (var pair in partIDs)
+                partList[pair.Value] = pair.Key;
+
+            var partTessellations = new List<PartTessellation>();
+
+            foreach (var part in partList) {
+                var totalTessellation = new PartTessellation();
+                foreach (var body in part.Bodies) {
+                    if (!body.GetVisibility(null) ?? !body.Layer.IsVisible(null))
+                        continue;
+
+                    var masterBody = body.Shape;
+
+                    PartTessellation tessellation;
+                    Func<Face, Color> getColor = f => body.GetDesignFace(f).GetColor(null) ??
+                                        body.GetColor(null) ??
+                                        body.Layer.GetColor(null);
+                    tessellation = GetBodyTessellation(masterBody, getColor, surfaceDeviation, angleDeviation);
+
+                    totalTessellation.Add(tessellation);
+                }
+
+                foreach (var component in part.Components) {
+                    int id;
+                    if(!partIDs.TryGetValue(component.Template, out id))
+                        continue;
+                    
+                    var threeJsComponent = new ThreeJsComponent { 
+                        Id = id, 
+                        Name=component.Template.Name, 
+                        Transformation = component.Placement 
+                    };
+
+                    totalTessellation.Components.Add(threeJsComponent);
+                }
+
+                partTessellations.Add(totalTessellation);
+            }
+
+            StringBuilder sb = new StringBuilder();
+            StringWriter sw = new StringWriter(sb);
+
+            using (JsonWriter writer = new JsonTextWriter(sw)) {
+                writer.Formatting = Formatting.Indented;
+
+                writer.WriteStartArray();
+
+                foreach (var tessellation in partTessellations)
+                    tessellation.ToJson(writer);
+
+                writer.WriteEndArray();
+            }
+
+            var result = sb.ToString();
 
             var d = new SaveFileDialog();
             d.FileName = document.Path;
@@ -95,6 +135,7 @@ namespace SpaceClaim.AddIn.ThreeJsExport {
         class PartTessellation {
             public List<BodyTessellation> Lines = new List<BodyTessellation>();
             public List<BodyTessellation> Meshes = new List<BodyTessellation>();
+            public List<ThreeJsComponent> Components = new List<ThreeJsComponent>();
 
             public PartTessellation GetTransformed(Matrix transform) {
                 return new PartTessellation {
@@ -106,43 +147,76 @@ namespace SpaceClaim.AddIn.ThreeJsExport {
             public void Add(PartTessellation other) {
                 Lines.AddRange(other.Lines);
                 Meshes.AddRange(other.Meshes);
+                Components.AddRange(other.Components);
             }
 
-            public string ToJson() {
-                StringBuilder sb = new StringBuilder();
-                StringWriter sw = new StringWriter(sb);
+            public void ToJson(JsonWriter writer) {
+                writer.WriteStartObject();
 
-                using (JsonWriter writer = new JsonTextWriter(sw)) {
-                    writer.Formatting = Formatting.Indented;
+                if (Lines.Count > 0) {
+                    writer.WritePropertyName("lines");
+                    writer.WriteStartArray();
 
-                    writer.WriteStartObject();
-
-                    if (Lines.Count > 0) {
-                        writer.WritePropertyName("lines");
-                        writer.WriteStartArray();
-
-                        foreach (var line in Lines) {
-                            writer.WriteRawValue(line.ToJson());
-                        }
-
-                        writer.WriteEndArray();
+                    foreach (var line in Lines) {
+                        line.ToJson(writer);
                     }
 
-                    if (Meshes.Count > 0) {
-                        writer.WritePropertyName("meshes");
-                        writer.WriteStartArray();
-
-                        foreach (var line in Meshes) {
-                            writer.WriteRawValue(line.ToJson());
-                        }
-
-                        writer.WriteEndArray();
-                    }
-
-                    writer.WriteEndObject();
+                    writer.WriteEndArray();
                 }
 
-                return sb.ToString();
+                if (Meshes.Count > 0) {
+                    writer.WritePropertyName("meshes");
+                    writer.WriteStartArray();
+
+                    foreach (var mesh in Meshes) {
+                        mesh.ToJson(writer);
+                    }
+
+                    writer.WriteEndArray();
+                }
+
+                if (Components.Count > 0) {
+                    writer.WritePropertyName("components");
+                    writer.WriteStartArray();
+
+                    foreach (var component in Components) {
+                        component.ToJson(writer);
+                    }
+
+                    writer.WriteEndArray();
+                }
+
+                writer.WriteEndObject();
+            }
+        }
+
+
+        class ThreeJsComponent {
+            public string Name { get; set; }
+            public int Id { get; set; }
+            public Matrix Transformation { get; set; }
+
+            public void ToJson(JsonWriter writer) {
+                writer.WriteStartObject();
+
+                writer.WritePropertyName("name");
+                writer.WriteValue(Name);
+
+                writer.WritePropertyName("id");
+                writer.WriteValue(Id);
+
+                writer.WritePropertyName("transformation");
+                writer.WriteStartArray();
+
+                for (var i = 0; i < 4; i++) {
+                    for (var j = 0; j < 4; j++) {
+                        writer.WriteValue(Transformation[i, j]);
+                    }
+                }
+
+                writer.WriteEndArray();
+
+                writer.WriteEndObject();
             }
         }
 
@@ -176,49 +250,42 @@ namespace SpaceClaim.AddIn.ThreeJsExport {
                 }));
             }
 
-            public string ToJson() {
-                StringBuilder sb = new StringBuilder();
-                StringWriter sw = new StringWriter(sb);
+            public void ToJson(JsonWriter writer) {
+                writer.Formatting = Formatting.Indented;
 
-                using (JsonWriter writer = new JsonTextWriter(sw)) {
-                    writer.Formatting = Formatting.Indented;
+                writer.WriteStartObject();
 
-                    writer.WriteStartObject();
+                writer.WritePropertyName("metadata");
+                writer.WriteStartObject();
+                writer.WritePropertyName("formatVersion");
+                writer.WriteValue(3);
+                writer.WriteEndObject();
 
-                    writer.WritePropertyName("metadata");
-                    writer.WriteStartObject();
-                    writer.WritePropertyName("formatVersion");
-                    writer.WriteValue(3);
-                    writer.WriteEndObject();
+                writer.WritePropertyName("vertices");
+                writer.WriteStartArray();
+                foreach (var vertex in VertexPositions)
+                    writer.WriteRawValue(string.Format("{0:0.0###############},{1:0.0###############},{2:0.0###############}", vertex.X, vertex.Y, vertex.Z));
+                writer.WriteEndArray();
 
-                    writer.WritePropertyName("vertices");
-                    writer.WriteStartArray();
-                    foreach (var vertex in VertexPositions)
-                        writer.WriteRawValue(string.Format("{0:0.0###############},{1:0.0###############},{2:0.0###############}", vertex.X, vertex.Y, vertex.Z));
-                    writer.WriteEndArray();
+                writer.WritePropertyName("normals");
+                writer.WriteStartArray();
+                foreach (var normal in VertexNormals)
+                    writer.WriteRawValue(string.Format("{0:0.0###############},{1:0.0###############},{2:0.0###############}", normal.X, normal.Y, normal.Z));
+                writer.WriteEndArray();
 
-                    writer.WritePropertyName("normals");
-                    writer.WriteStartArray();
-                    foreach (var normal in VertexNormals)
-                        writer.WriteRawValue(string.Format("{0:0.0###############},{1:0.0###############},{2:0.0###############}", normal.X, normal.Y, normal.Z));
-                    writer.WriteEndArray();
+                writer.WritePropertyName("colors");
+                writer.WriteStartArray();
+                foreach (var color in FaceColors)
+                    writer.WriteValue(((long)color.R << 16) | ((long)color.G << 8) | color.B);
+                writer.WriteEndArray();
 
-                    writer.WritePropertyName("colors");
-                    writer.WriteStartArray();
-                    foreach (var color in FaceColors)
-                        writer.WriteValue(((long)color.R << 16) | ((long)color.G << 8) | color.B);
-                    writer.WriteEndArray();
+                writer.WritePropertyName("faces");
+                writer.WriteStartArray();
+                foreach (var face in Faces)
+                    writer.WriteRawValue(face.ToString());
+                writer.WriteEndArray();
 
-                    writer.WritePropertyName("faces");
-                    writer.WriteStartArray();
-                    foreach (var face in Faces)
-                        writer.WriteRawValue(face.ToString());
-                    writer.WriteEndArray();
-
-                    writer.WriteEndObject();
-                }
-
-                return sb.ToString();
+                writer.WriteEndObject();
             }
         }
 
